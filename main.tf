@@ -175,3 +175,88 @@ resource "azurerm_linux_virtual_machine" "DevVM" {
   }
 }
 
+// Create RBAC for 'Developers' and 'Admins'
+data "azurerm_subscription" "current" {
+}
+
+// Creates role called "Admins" that grants full access similar to the built-in "Owner" role in Azure
+resource "azurerm_role_definition" "Admins" {
+  name        = "Admins"
+  scope       = data.azurerm_subscription.current.id
+  description = "Role for Admins that grants full access"
+
+  permissions {
+    actions     = ["*"]
+    not_actions = []
+  }
+
+  assignable_scopes = [
+    data.azurerm_subscription.current.id,
+  ]
+}
+
+// Creates role called "Developers" that grants full read access similar ot the built-in "Reader" role in Azure
+resource "azurerm_role_definition" "Developers" {
+  name        = "Developers"
+  scope       = data.azurerm_subscription.current.id
+  description = "Role for Developers that grants read-only access"
+
+  permissions {
+    actions     = ["*/read"]
+    not_actions = []
+  }
+
+  assignable_scopes = [
+    data.azurerm_subscription.current.id, 
+  ]
+}
+
+// Assign built in policy to configure storage accounts to disable public network access
+resource "azurerm_subscription_policy_assignment" "StorageAccountsDisablePublicAccess" {
+  name                 = "Storage accounts should disable public network access"
+  policy_definition_id = "/providers/Microsoft.Authorization/policyDefinitions/b2982f36-99f2-4db5-8eff-283140c09693"
+  subscription_id      = data.azurerm_subscription.current.id
+}
+
+// Create policy that will set minimum TLS version to 1.2
+resource "azurerm_policy_definition" "MinimumTLSVersion" {
+  name         = "tls-minimum-1.2"
+  policy_type  = "Custom"
+  mode         = "All"
+  display_name = "Minimum TLS 1.2"
+
+  policy_rule = <<POLICY_RULE
+ {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        {
+            "anyOf": [
+              {
+                "field": "Microsoft.Storage/storageAccounts/minimumTlsVersion",
+                "notEquals": "TLS1_2"
+              },
+              {
+                "field": "Microsoft.Storage/storageAccounts/minimumTlsVersion",
+                "exists": "false"
+              }
+            ]
+        }
+      ]
+    },
+    "then": {
+      "effect": "deny"
+    }
+  }
+POLICY_RULE
+}
+
+// Assign policy to the subscription
+resource "azurerm_subscription_policy_assignment" "MinimumTLS" {
+  name                 = "TLSMinimum"
+  policy_definition_id = azurerm_policy_definition.MinimumTLSVersion.id
+  subscription_id      = data.azurerm_subscription.current.id
+}
